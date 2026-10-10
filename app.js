@@ -28,11 +28,30 @@ const Commands = {
     }
 };
 
+const xorsum = bytes => bytes.reduce((x, b) => x ^ b, 0);
+
+/* Empfangene Frames:
+ *  D5 | LEN | …  | SUM   – Controller-Status (Summen-Prüfsumme wie beim Senden)
+ *  01 | LEN | …  | XOR   – Display-/Telemetrie-Frame (XOR über alle Bytes)
+ */
 function parseFrame(bytes) {
-    if (bytes.length < 3 || bytes[0] !== HEADER) return null;
-    const body = bytes.slice(1, -1);
-    return { cmd: bytes[2], data: bytes.slice(3, -1), valid: checksum(body) === bytes[bytes.length - 1] };
+    if (bytes.length < 3 || bytes[1] !== bytes.length) return null;
+    const last = bytes[bytes.length - 1];
+    if (bytes[0] === 0xD5 || bytes[0] === HEADER) {
+        return { type: bytes[0].toString(16).toUpperCase(), valid: checksum(bytes.slice(1, -1)) === last };
+    }
+    if (bytes[0] === 0x01) return { type: '01', valid: xorsum(bytes.slice(0, -1)) === last };
+    return null;
 }
+
+// Vermutete Felder – müssen noch durch Fahr-/Ladedaten bestätigt werden
+const u16 = (b, i) => (b[i] << 8) | b[i + 1];
+const FIELDS = [
+    { id: 'volt', label: 'Spannung', frame: '01', unit: 'V', guess: true, read: b => (u16(b, 14) / 10).toFixed(1).replace('.', ',') },
+    { id: 'batA', label: 'Akku', frame: '01', unit: '%', guess: true, read: b => b[8] },
+    { id: 'batB', label: 'Akku (alt.)', frame: 'D5', unit: '%', guess: true, read: b => b[19] },
+    { id: 'odo', label: 'Kilometer', frame: 'D5', unit: 'km', guess: true, read: b => (u16(b, 17) / 10).toFixed(1).replace('.', ',') }
+];
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = id => document.getElementById(id);
@@ -226,12 +245,74 @@ async function autoConnect() {
     }
 }
 
+const frames = {};          // type -> { bytes, changedAt[] }
+const repeatCount = {};
+
 function onNotify(e) {
-    const bytes = new Uint8Array(e.target.value.buffer);
+    const bytes = new Uint8Array(e.target.value.buffer.slice(0));
     const f = parseFrame(bytes);
-    const note = f ? (f.valid ? ` (CMD ${f.cmd.toString(16).toUpperCase()})` : ' (Prüfsumme falsch)') : '';
-    log(`RX: ${toHex(bytes)}${note}`, 'rx');
+    const type = f?.type ?? '??';
+    const prev = frames[type];
+    const hex = toHex(bytes);
+
+    // Nur geänderte Frames protokollieren, sonst flutet das Log (~16 Frames/s)
+    if (!prev || toHex(prev.bytes) !== hex) {
+        if (repeatCount[type]) log(`   … ${repeatCount[type]}× unverändert`, 'info');
+        repeatCount[type] = 0;
+        const note = f ? (f.valid ? ` [${type}]` : ` [${type}, Prüfsumme falsch]`) : ' [unbekannt]';
+        log(`RX: ${hex}${note}`, 'rx');
+    } else {
+        repeatCount[type]++;
+    }
+
+    const now = Date.now();
+    const changedAt = prev?.changedAt?.length === bytes.length ? prev.changedAt : new Array(bytes.length).fill(0);
+    if (prev) bytes.forEach((b, i) => { if (prev.bytes[i] !== b) changedAt[i] = now; });
+    frames[type] = { bytes, changedAt, valid: f?.valid };
+    scheduleLiveRender();
 }
+
+let renderPending = false;
+function scheduleLiveRender() {
+    if (renderPending) return;
+    renderPending = true;
+    requestAnimationFrame(() => { renderPending = false; renderLive(); });
+}
+
+function renderLive() {
+    $('live-values').replaceChildren(...FIELDS.map(f => {
+        const fr = frames[f.frame];
+        const el = document.createElement('div');
+        el.className = 'live-item';
+        const val = fr?.valid ? f.read(fr.bytes) : '–';
+        el.innerHTML = '<span class="live-label"></span><span class="live-value"></span>';
+        el.firstChild.textContent = f.label + (f.guess ? ' ?' : '');
+        el.lastChild.textContent = `${val} ${f.unit}`;
+        return el;
+    }));
+
+    const now = Date.now();
+    $('raw-frames').replaceChildren(...Object.entries(frames).map(([type, fr]) => {
+        const row = document.createElement('div');
+        row.className = 'raw-row';
+        const label = document.createElement('div');
+        label.className = 'raw-label';
+        label.textContent = `${type}${fr.valid ? '' : ' ✗'}`;
+        const grid = document.createElement('div');
+        grid.className = 'raw-bytes';
+        fr.bytes.forEach((b, i) => {
+            const cell = document.createElement('span');
+            cell.textContent = b.toString(16).padStart(2, '0').toUpperCase();
+            cell.title = `Byte ${i} = ${b}`;
+            if (now - fr.changedAt[i] < 3000) cell.className = 'changed';
+            grid.append(cell);
+        });
+        row.append(label, grid);
+        return row;
+    }));
+}
+
+setInterval(() => { if (Object.keys(frames).length) renderLive(); }, 1000);
 
 async function onDisconnected() {
     ble.write = ble.notify = null;
