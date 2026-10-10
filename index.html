@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="Bluetooth-Steuerung für den SoFlow S04 Pro (Web Bluetooth)">
+    <meta name="theme-color" content="#0F172A">
+    <title>Scooter Tune</title>
+
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icon.svg">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Scooter Tune">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="style.css">
+    <script src="app.js" defer></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <header class="glass-panel">
+            <h1>Scooter Tune</h1>
+            <p class="subtitle">SoFlow S04 Pro</p>
+
+            <details class="legal-disclaimer-box">
+                <summary>Rechtlicher Hinweis</summary>
+                <p>Bereitgestellt <strong>„wie besehen“</strong> ohne jede Gewährleistung (<strong>MIT-Lizenz</strong>).</p>
+                <ul>
+                    <li><strong>Nur Privatgelände:</strong> Diagnose und Tests auf eigenem Grund.</li>
+                    <li><strong>Eigenes Risiko:</strong> Schäden an Hardware, Garantieverlust.</li>
+                    <li><strong>Straßenzulassung:</strong> In Deutschland gilt nach eKFV max. 20 km/h. Darüber erlischt
+                        die Betriebserlaubnis und damit der Versicherungsschutz.</li>
+                </ul>
+            </details>
+
+            <p id="connection-status" class="status-disconnected" role="status" aria-live="polite">Getrennt</p>
+            <button id="btn-connect" class="btn-primary">Scooter verbinden</button>
+        </header>
+
+        <main id="main-content" class="disabled-overlay" inert>
+
+            <section class="control-panel glass-panel">
+                <h2>Sperre</h2>
+                <div class="button-grid">
+                    <button data-cmd="lock" class="btn-danger">Sperren</button>
+                    <button data-cmd="unlock" class="btn-success">Entsperren</button>
+                </div>
+            </section>
+
+            <section class="control-panel glass-panel">
+                <h2>Geschwindigkeitslimit</h2>
+                <output class="speed-display" for="speed-slider">
+                    <span id="speed-value">20</span><span class="unit">km/h</span>
+                </output>
+                <input type="range" id="speed-slider" class="styled-slider" min="8" max="30" value="20" step="1"
+                    aria-label="Geschwindigkeitslimit in km/h">
+                <div class="quick-speeds button-grid" id="speed-presets">
+                    <button class="btn-secondary" data-speed="15">15</button>
+                    <button class="btn-secondary" data-speed="20">20</button>
+                    <button class="btn-secondary" data-speed="25">25</button>
+                    <button class="btn-secondary" data-speed="30">30</button>
+                </div>
+                <p id="speed-warning" class="warning hidden">Über 20 km/h: nicht zulässig im öffentlichen Straßenverkehr.</p>
+                <button id="btn-set-speed" class="btn-primary mt-3">Limit übernehmen</button>
+            </section>
+
+            <section class="control-panel glass-panel">
+                <h2>Fahrmodus</h2>
+                <div class="button-grid" id="mode-buttons">
+                    <button class="btn-secondary mode-btn" data-mode="0">ECO</button>
+                    <button class="btn-secondary mode-btn" data-mode="1">Normal</button>
+                    <button class="btn-secondary mode-btn" data-mode="2">Sport</button>
+                    <button class="btn-secondary mode-btn" data-mode="3">Dev</button>
+                    <button class="btn-secondary mode-btn" data-mode="4">Modus 5</button>
+                </div>
+            </section>
+
+            <details class="control-panel glass-panel collapsible">
+                <summary class="collapsible-header"><h2>Erweitert</h2></summary>
+                <div class="collapsible-content">
+                    <form id="hex-form" class="input-group">
+                        <label for="hex-cmd">Eigener Hex-Befehl</label>
+                        <input type="text" id="hex-cmd" placeholder="z. B. D706A30001 (Prüfsumme optional)"
+                            autocomplete="off" autocapitalize="characters" spellcheck="false"
+                            pattern="^[0-9A-Fa-f\s]+$">
+                        <label class="checkbox"><input type="checkbox" id="hex-auto-checksum" checked>
+                            Prüfsumme automatisch anhängen</label>
+                        <button type="submit" class="btn-secondary mt-2">Senden</button>
+                    </form>
+                </div>
+            </details>
+
+            <section class="console glass-panel">
+                <div class="console-header">
+                    <h3>Geräteausgabe</h3>
+                    <button id="btn-clear-log" class="btn-text">Leeren</button>
+                </div>
+                <div id="log-output" class="log-window" role="log" aria-live="polite"></div>
+            </section>
+        </main>
+    </div>
+
+    <dialog id="confirm-dialog" class="glass-panel">
+        <form method="dialog">
+            <p id="confirm-text"></p>
+            <div class="button-grid mt-3">
+                <button value="cancel" class="btn-secondary">Abbrechen</button>
+                <button value="ok" class="btn-primary">Bestätigen</button>
+            </div>
+        </form>
+    </dialog>
+
+    <div id="toast-container" aria-live="assertive"></div>
+</body>
+
+</html>
