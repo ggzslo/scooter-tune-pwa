@@ -396,3 +396,14 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); backdrop-filter: blur(4px); }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ---------- Profile ---------- */
+.last-state { font-size: 13px; color: var(--text-secondary); }
+.profile-list { display: flex; flex-direction: column; gap: 8px; }
+.profile-row { display: flex; gap: 8px; align-items: stretch; }
+.profile-apply { display: flex; justify-content: space-between; align-items: center; text-align: left; }
+.profile-name { font-weight: 600; }
+.profile-meta { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+.profile-delete { color: var(--text-secondary); font-size: 16px; }
+.profile-form { display: flex; gap: 8px; }
+.profile-form button { width: auto; white-space: nowrap; }

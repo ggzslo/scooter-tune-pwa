@@ -42,10 +42,20 @@
             </details>
 
             <p id="connection-status" class="status-disconnected" role="status" aria-live="polite">Getrennt</p>
+            <p id="last-state" class="last-state hidden"></p>
             <button id="btn-connect" class="btn-primary">Scooter verbinden</button>
         </header>
 
         <main id="main-content" class="disabled-overlay" inert>
+
+            <section class="control-panel glass-panel">
+                <h2>Profile</h2>
+                <div class="profile-list" id="profile-list"></div>
+                <form id="profile-form" class="profile-form mt-3">
+                    <input type="text" id="profile-name" placeholder="Name für aktuelle Einstellung" maxlength="24" required>
+                    <button type="submit" class="btn-secondary">Speichern</button>
+                </form>
+            </section>
 
             <section class="control-panel glass-panel">
                 <h2>Sperre</h2>
@@ -101,7 +111,10 @@
             <section class="console glass-panel">
                 <div class="console-header">
                     <h3>Geräteausgabe</h3>
-                    <button id="btn-clear-log" class="btn-text">Leeren</button>
+                    <div>
+                        <button id="btn-export-log" class="btn-text">Exportieren</button>
+                        <button id="btn-clear-log" class="btn-text">Leeren</button>
+                    </div>
                 </div>
                 <div id="log-output" class="log-window" role="log" aria-live="polite"></div>
             </section>

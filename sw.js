@@ -1,4 +1,4 @@
-const CACHE = 'scooter-tune-v2';
+const CACHE = 'scooter-tune-v3';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', e => {

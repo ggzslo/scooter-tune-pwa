@@ -44,12 +44,28 @@ function fromHex(str) {
     return Uint8Array.from(clean.match(/../g), h => parseInt(h, 16));
 }
 
+const store = {
+    get(key, fallback) {
+        try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+    },
+    set(key, value) {
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Speicher nicht verfügbar */ }
+    }
+};
+
+const vibrate = pattern => navigator.vibrate?.(pattern);
+
 const MAX_LOG = 200;
+const MAX_HISTORY = 2000;
+const logHistory = [];
 function log(msg, type = 'info') {
     const out = $('log-output');
+    const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logHistory.push(`${new Date().toISOString()} ${type.toUpperCase().padEnd(7)} ${msg}`);
+    if (logHistory.length > MAX_HISTORY) logHistory.shift();
     const entry = document.createElement('div');
     entry.className = `log-entry ${type}`;
-    entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    entry.textContent = line;
     out.append(entry);
     while (out.childElementCount > MAX_LOG) out.firstElementChild.remove();
     out.scrollTop = out.scrollHeight;
@@ -107,6 +123,7 @@ const ble = {
         device.removeEventListener('gattserverdisconnected', onDisconnected);
         device.addEventListener('gattserverdisconnected', onDisconnected);
 
+        store.set('lastDevice', { id: device.id, name: device.name || '' });
         log(`Verbinde mit ${device.name || 'unbekanntem Gerät'}…`);
         const server = await device.gatt.connect();
         await this.discover(server);
@@ -169,6 +186,46 @@ const ble = {
     }
 };
 
+// Bekannten Scooter ohne Geräteauswahl verbinden (Chrome: getDevices)
+async function findKnownDevice() {
+    const last = store.get('lastDevice');
+    if (!last || !navigator.bluetooth?.getDevices) return null;
+    try {
+        return (await navigator.bluetooth.getDevices()).find(d => d.id === last.id) || null;
+    } catch { return null; }
+}
+
+function waitForAdvertisement(device, ms = 8000) {
+    if (!device.watchAdvertisements) return Promise.resolve();
+    const ctrl = new AbortController();
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { ctrl.abort(); reject(new Error('Scooter nicht in Reichweite.')); }, ms);
+        device.addEventListener('advertisementreceived', () => {
+            clearTimeout(timer);
+            ctrl.abort();
+            resolve();
+        }, { once: true });
+        device.watchAdvertisements({ signal: ctrl.signal }).catch(err => { clearTimeout(timer); reject(err); });
+    });
+}
+
+async function autoConnect() {
+    const device = await findKnownDevice();
+    if (!device) return false;
+    log(`Suche ${device.name || 'bekannten Scooter'}…`);
+    try {
+        await waitForAdvertisement(device);
+        await ble.connect(device);
+        setUI(true);
+        vibrate(30);
+        toast('Automatisch verbunden');
+        return true;
+    } catch (err) {
+        log(`Auto-Verbindung: ${err.message}`, 'warning');
+        return false;
+    }
+}
+
 function onNotify(e) {
     const bytes = new Uint8Array(e.target.value.buffer);
     const f = parseFrame(bytes);
@@ -205,13 +262,92 @@ function setUI(connected) {
 async function run(bytes, successMsg) {
     try {
         await ble.send(bytes);
+        vibrate(30);
         if (successMsg) toast(successMsg);
         return true;
     } catch (err) {
+        vibrate([60, 60, 60]);
         log(`Fehler: ${err.message}`, 'error');
         toast('Senden fehlgeschlagen');
         return false;
     }
+}
+
+/* ---------- Zustand & Profile ---------- */
+const MODE_NAMES = ['ECO', 'Normal', 'Sport', 'Dev', 'Modus 5'];
+const state = store.get('state', { speed: null, mode: null });
+
+function saveState(patch) {
+    Object.assign(state, patch);
+    store.set('state', state);
+    renderState();
+}
+
+function renderState() {
+    const parts = [];
+    if (state.speed != null) parts.push(`${state.speed} km/h`);
+    if (state.mode != null) parts.push(MODE_NAMES[state.mode]);
+    const el = $('last-state');
+    el.textContent = parts.length ? `Zuletzt gesendet: ${parts.join(' · ')}` : '';
+    el.classList.toggle('hidden', !parts.length);
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('selected', +b.dataset.mode === state.mode));
+}
+
+const DEFAULT_PROFILES = [
+    { name: 'Stadt', speed: 20, mode: 0 },
+    { name: 'Standard', speed: 20, mode: 1 }
+];
+let profiles = store.get('profiles', DEFAULT_PROFILES);
+
+function renderProfiles() {
+    const list = $('profile-list');
+    list.replaceChildren(...profiles.map((p, i) => {
+        const row = document.createElement('div');
+        row.className = 'profile-row';
+        const apply = document.createElement('button');
+        apply.className = 'btn-secondary profile-apply';
+        apply.dataset.index = i;
+        apply.innerHTML = '<span class="profile-name"></span><span class="profile-meta"></span>';
+        apply.querySelector('.profile-name').textContent = p.name;
+        apply.querySelector('.profile-meta').textContent = `${p.speed} km/h · ${MODE_NAMES[p.mode]}`;
+        const del = document.createElement('button');
+        del.className = 'btn-text profile-delete';
+        del.dataset.index = i;
+        del.setAttribute('aria-label', `Profil ${p.name} löschen`);
+        del.textContent = '✕';
+        row.append(apply, del);
+        return row;
+    }));
+}
+
+async function confirmSpeed(v) {
+    return v <= LEGAL_LIMIT || confirmAction(
+        `${v} km/h liegt über dem gesetzlichen Limit von ${LEGAL_LIMIT} km/h. Nur auf Privatgelände nutzen. Fortfahren?`);
+}
+
+async function applyProfile(p) {
+    if (!await confirmSpeed(p.speed)) return;
+    if (!await run(Commands.mode(p.mode))) return;
+    saveState({ mode: p.mode });
+    if (!await run(Commands.speed(p.speed), `Profil „${p.name}“ aktiv`)) return;
+    saveState({ speed: p.speed });
+    setSpeedView(p.speed);
+}
+
+async function exportLog() {
+    if (!logHistory.length) return toast('Protokoll ist leer');
+    const text = `Scooter Tune – Protokoll\n${navigator.userAgent}\n\n${logHistory.join('\n')}\n`;
+    const name = `scooter-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.txt`;
+    const file = new File([text], name, { type: 'text/plain' });
+    try {
+        if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: name });
+    } catch (err) {
+        if (err.name === 'AbortError') return;
+    }
+    const url = URL.createObjectURL(file);
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function setSpeedView(v) {
@@ -231,6 +367,7 @@ function init() {
         const btn = $('btn-connect');
         btn.disabled = true;
         try {
+            if (await autoConnect()) return;
             await ble.connect(await ble.request());
             setUI(true);
             toast('Verbunden');
@@ -261,17 +398,15 @@ function init() {
     $('btn-set-speed').addEventListener('click', async () => {
         const v = +$('speed-slider').value;
         if (v < SPEED_MIN || v > SPEED_MAX) return toast('Ungültiger Wert');
-        if (v > LEGAL_LIMIT && !await confirmAction(
-            `${v} km/h liegt über dem gesetzlichen Limit von ${LEGAL_LIMIT} km/h. Nur auf Privatgelände nutzen. Fortfahren?`)) return;
-        run(Commands.speed(v), `Limit: ${v} km/h`);
+        if (!await confirmSpeed(v)) return;
+        if (await run(Commands.speed(v), `Limit: ${v} km/h`)) saveState({ speed: v });
     });
 
     $('mode-buttons').addEventListener('click', async e => {
         const btn = e.target.closest('[data-mode]');
         if (!btn) return;
-        if (await run(Commands.mode(+btn.dataset.mode), `Modus: ${btn.textContent}`)) {
-            document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('selected', b === btn));
-        }
+        const mode = +btn.dataset.mode;
+        if (await run(Commands.mode(mode), `Modus: ${btn.textContent}`)) saveState({ mode });
     });
 
     $('hex-form').addEventListener('submit', e => {
@@ -285,9 +420,45 @@ function init() {
         }
     });
 
-    $('btn-clear-log').addEventListener('click', () => $('log-output').replaceChildren());
+    $('btn-clear-log').addEventListener('click', () => {
+        $('log-output').replaceChildren();
+        logHistory.length = 0;
+    });
+    $('btn-export-log').addEventListener('click', exportLog);
 
-    setSpeedView(+$('speed-slider').value);
+    $('profile-list').addEventListener('click', async e => {
+        const apply = e.target.closest('.profile-apply');
+        const del = e.target.closest('.profile-delete');
+        if (apply) return applyProfile(profiles[+apply.dataset.index]);
+        if (del) {
+            const p = profiles[+del.dataset.index];
+            if (!await confirmAction(`Profil „${p.name}“ löschen?`)) return;
+            profiles.splice(+del.dataset.index, 1);
+            store.set('profiles', profiles);
+            renderProfiles();
+        }
+    });
+
+    $('profile-form').addEventListener('submit', e => {
+        e.preventDefault();
+        const name = $('profile-name').value.trim();
+        if (!name) return;
+        const p = { name, speed: +$('speed-slider').value, mode: state.mode ?? 1 };
+        const existing = profiles.findIndex(x => x.name.toLowerCase() === name.toLowerCase());
+        existing >= 0 ? profiles.splice(existing, 1, p) : profiles.push(p);
+        store.set('profiles', profiles);
+        renderProfiles();
+        $('profile-name').value = '';
+        toast(`Profil „${name}“ gespeichert`);
+    });
+
+    renderProfiles();
+    renderState();
+    setSpeedView(state.speed ?? +$('speed-slider').value);
+
+    findKnownDevice().then(d => {
+        if (d) $('btn-connect').textContent = `Mit ${d.name || 'Scooter'} verbinden`;
+    });
 
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW:', err));
