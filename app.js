@@ -314,19 +314,29 @@ function renderLive() {
 
 setInterval(() => { if (Object.keys(frames).length) renderLive(); }, 1000);
 
+let reconnecting = false;
 async function onDisconnected() {
     ble.write = ble.notify = null;
     setUI(false);
     if (ble.manualDisconnect) return log('Verbindung getrennt.', 'warning');
+    if (reconnecting) return; // läuft schon – keine parallelen Versuche
 
+    reconnecting = true;
     log('Verbindung verloren – versuche Neuverbindung…', 'warning');
-    for (let i = 1; i <= 3; i++) {
-        await new Promise(r => setTimeout(r, 1000 * i));
-        try {
-            await ble.connect(ble.device);
-            setUI(true);
-            return toast('Wieder verbunden');
-        } catch { log(`Neuverbindung ${i}/3 fehlgeschlagen.`, 'error'); }
+    try {
+        for (let i = 1; i <= 5; i++) {
+            await new Promise(r => setTimeout(r, 1000 * i));
+            if (ble.manualDisconnect) return;
+            try {
+                await ble.connect(ble.device);
+                setUI(true);
+                toast('Wieder verbunden');
+                return;
+            } catch (err) { log(`Neuverbindung ${i}/5 fehlgeschlagen: ${err.message}`, 'error'); }
+        }
+        toast('Verbindung verloren');
+    } finally {
+        reconnecting = false;
     }
 }
 
